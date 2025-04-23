@@ -27,7 +27,7 @@ def parse_arguments():
     parser.add_argument("--episodes_per_iteration", type=int, default=cfg.DEFAULT_EPISODES_PER_ITERATION, help="Global batch size (episodes per iteration)")
     parser.add_argument("--generations_per_sample", type=int, default=cfg.DEFAULT_GENERATIONS_PER_SAMPLE, help="Number of responses per prompt")
     parser.add_argument("--per_device_batch_size", type=int, default=cfg.DEFAULT_PER_DEVICE_BATCH_SIZE, help="Micro-batch size per GPU")
-    parser.add_argument("--no_vllm", action="store_true", help="If set, skip initializing vLLM inference engine to save memory")
+    parser.add_argument("--no_vllm", action="store_true", help="If set, skip initializing vLLM inference engine and use policy model for generation")
 
     args = parser.parse_args()
     return args
@@ -175,7 +175,7 @@ def main():
         )
     else:
         if is_rank_0:
-            print("Skipping vLLM initialization (--no_vllm specified).")
+            print("Skipping vLLM initialization (--no_vllm specified). Will use policy model for generation.")
 
     # --- WandB Setup (Rank 0) --- #
     if is_rank_0:

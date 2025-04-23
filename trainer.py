@@ -11,6 +11,7 @@ from vllm import LLM, SamplingParams # Added LLM
 from tqdm import trange
 import wandb
 from typing import Any, Dict, List, Tuple, Union
+import deepspeed # Need this for GatheredParameters
 
 # Import from project modules
 from reward import compute_reward
@@ -226,26 +227,29 @@ def train_loop(
         # --- Generate Episodes (Rank 0 Only) ---
         episodes = {}
         episodes_stats = {}
-        generation_data = None
         gen_time = 0
 
         if is_rank_0:
-            if inference_engine is None:
-                print("Rank 0: Skipping episode generation as vLLM engine failed to initialize.")
-                generation_data = {"episodes": {}, "episodes_stats": {}}
+            gen_start_time = time.time()
+            num_samples = EPISODES_PER_ITERATION // GENERATIONS_PER_SAMPLE
+            train_len = dataset_info['train_len']
+            if train_len > 0 and num_samples > 0:
+                # Ensure size calculation is correct
+                size = min(num_samples, train_len)
+                replace = len(train_dataset) < size # Original logic was potentially incorrect
+                indices = np.random.choice(train_len, size=size, replace=replace)
+                samples = train_dataset.select(indices).to_list()
             else:
-                gen_start_time = time.time()
-                num_samples = EPISODES_PER_ITERATION // GENERATIONS_PER_SAMPLE
-                train_len = dataset_info['train_len']
-                if train_len > 0 and num_samples > 0:
-                     size = min(num_samples, train_len) if not (len(train_dataset) < num_samples) else num_samples
-                     indices = np.random.choice(train_len, size=size, replace=len(train_dataset) < num_samples)
-                     samples = train_dataset.select(indices).to_list()
-                else:
-                     samples = []
+                samples = []
 
-                if samples:
-                    print(f"Rank 0: Generating {len(samples) * GENERATIONS_PER_SAMPLE} responses...")
+            all_generations = []
+            all_finish_reasons = []
+            generation_data = {"episodes": {}, "episodes_stats": {}} # Default if no samples
+
+            if samples:
+                if inference_engine is not None:
+                    # --- vLLM Path --- #
+                    print(f"Rank 0: Generating {len(samples) * GENERATIONS_PER_SAMPLE} responses using vLLM...")
                     try:
                         outputs = inference_engine.generate(
                             prompt_token_ids=[s['input_ids'] for s in samples],
@@ -263,14 +267,51 @@ def train_loop(
                         all_generations = [list(g.token_ids) for out in outputs for g in out.outputs]
                         all_finish_reasons = [g.finish_reason for out in outputs for g in out.outputs]
 
-                        print(f"Rank 0: Generated {len(all_generations)} responses")
-                        gc.collect()
-                        torch.cuda.empty_cache()
+                    except Exception as e:
+                        print(f"ERROR during vLLM generation: {e}")
+                        # Fallback to empty lists if vLLM fails mid-generation
+                        all_generations = []
+                        all_finish_reasons = []
+                else:
+                    # --- Policy Model Fallback Path --- #
+                    print(f"Rank 0: Generating {len(samples) * GENERATIONS_PER_SAMPLE} responses using Policy Model (GatheredParameters)...")
+                    for sample in samples:
+                        prompt_ids = torch.tensor([sample["input_ids"]], dtype=torch.long, device=device)
+                        try:
+                            # Temporarily materialize parameters on rank-0 only
+                            with deepspeed.zero.GatheredParameters(policy_model.parameters(), modifier_rank=0):
+                                gen_ids = policy_model.module.generate(
+                                    input_ids=prompt_ids,
+                                    do_sample=True,
+                                    temperature=TEMPERATURE,
+                                    top_p=TOP_P,
+                                    top_k=TOP_K,
+                                    max_new_tokens=MAX_RESPONSE_TOKENS,
+                                    num_return_sequences=GENERATIONS_PER_SAMPLE,
+                                    eos_token_id=EOS_TOKEN_ID,
+                                )
+                            # Strip prompt part
+                            responses = gen_ids[:, prompt_ids.size(1) :].tolist()
+                            all_generations.extend(responses)
+                            # Assume 'stop' finish reason for manual generation for simplicity
+                            all_finish_reasons.extend(["stop"] * GENERATIONS_PER_SAMPLE)
+                        except Exception as e:
+                            print(f"ERROR during Policy Model generation for one sample: {e}")
+                            # Add empty responses for this sample if generation failed
+                            all_generations.extend([[]] * GENERATIONS_PER_SAMPLE)
+                            all_finish_reasons.extend(["error"] * GENERATIONS_PER_SAMPLE)
 
-                        gen_time = time.time() - gen_start_time
-                        print(f"Rank 0: Generation took {gen_time:.2f} seconds")
+                # --- Process Generated Responses (Common for both paths if successful) --- #
+                if all_generations:
+                    print(f"Rank 0: Generated {len(all_generations)} responses total")
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
-                        print("Rank 0: Creating training episodes...")
+                    gen_time = time.time() - gen_start_time
+                    print(f"Rank 0: Generation took {gen_time:.2f} seconds")
+
+                    print("Rank 0: Creating training episodes...")
+                    try:
                         episodes, episodes_stats = create_training_episodes(
                             samples,
                             all_generations,
@@ -288,17 +329,19 @@ def train_loop(
                             exp_dir=EXP_DIR,
                             tokenizer=tokenizer,
                             iteration=iteration,
+                            is_eval=False, # Ensure this is False for training episodes
                             local_rank=local_rank,
                         )
                         generation_data = {"episodes": episodes, "episodes_stats": episodes_stats, "episode_table": episode_table, "gen_time": gen_time}
-
                     except Exception as e:
-                        print(f"ERROR during generation or episode creation: {e}")
+                        print(f"ERROR during episode creation: {e}")
                         generation_data = {"episodes": {}, "episodes_stats": {}}
-
                 else:
-                     print("Rank 0: No samples to generate/train on.")
-                     generation_data = {"episodes": {}, "episodes_stats": {}}
+                    print("Rank 0: Generation failed or produced no responses.")
+                    generation_data = {"episodes": {}, "episodes_stats": {}}
+            else:
+                 print("Rank 0: No samples to generate/train on.")
+                 generation_data = {"episodes": {}, "episodes_stats": {}}
         else:
              generation_data = None
 
