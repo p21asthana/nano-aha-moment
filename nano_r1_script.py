@@ -394,6 +394,10 @@ def main():
         "train_micro_batch_size_per_gpu": PER_DEVICE_BATCH_SIZE,
         "gradient_accumulation_steps": EPISODES_PER_ITERATION // PER_DEVICE_BATCH_SIZE,
         "gradient_clipping": 1.0,
+        "offload_optimizer": {  
+                "device": "cpu",
+                "pin_memory": True
+            },
         "optimizer": {
             "type": "AdamW",
             "params": {
