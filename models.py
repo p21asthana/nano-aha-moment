@@ -57,7 +57,8 @@ def initialize_inference_engine(
 
     # Calculate GPU memory fraction for vLLM on Rank 0
     # Needs careful tuning based on model size and training memory usage
-    vllm_gpu_util = 0.5 # Default: Use 50% of Rank 0 GPU for vLLM
+    # Reduce this value as Rank 0 GPU is shared with training
+    vllm_gpu_util = 0.25 # Default: Use 25% of Rank 0 GPU for vLLM
     print(f"Initializing vLLM on Rank 0 with gpu_memory_utilization={vllm_gpu_util:.2f}")
 
     try:
