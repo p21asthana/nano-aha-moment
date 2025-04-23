@@ -411,6 +411,10 @@ def main():
     }
     ref_deepspeed_config = {
         "bf16": {"enabled": True},
+        "offload_optimizer": {  
+                "device": "cpu",
+                "pin_memory": True
+            },
         "train_batch_size": EPISODES_PER_ITERATION,
         "train_micro_batch_size_per_gpu": PER_DEVICE_BATCH_SIZE,
         "gradient_accumulation_steps": EPISODES_PER_ITERATION // PER_DEVICE_BATCH_SIZE,
