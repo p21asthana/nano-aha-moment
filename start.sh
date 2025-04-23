@@ -1,3 +1,5 @@
+# conda activate /home/ec2-user/SageMaker/envs/nano-aha
+
 # Unset LD_LIBRARY_PATH
 unset LD_LIBRARY_PATH
 
