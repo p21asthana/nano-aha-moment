@@ -390,14 +390,20 @@ def main():
     deepspeed_config = {
         "bf16": {"enabled": True},
         "zero_optimization": {
-            "stage": 2,
-            "overlap_comm": False,
+            "stage": 3,
             "offload_optimizer": {
                 "device": "cpu",
                 "pin_memory": True
             },
+            "offload_param": {
+                "device": "cpu",
+                "pin_memory": True
+            },
+            "overlap_comm": False,
             "contiguous_gradients": True,
-            "reduce_bucket_size": 5e8,
+            "reduce_bucket_size": 5e7,
+            "stage3_prefetch_bucket_size": 5e7,
+            "stage3_param_persistence_threshold": 1e5
         },
         "train_batch_size": EPISODES_PER_ITERATION,
         "train_micro_batch_size_per_gpu": PER_DEVICE_BATCH_SIZE,
@@ -426,8 +432,8 @@ def main():
     ref_deepspeed_config = {
         "bf16": {"enabled": True},
         "zero_optimization": {
-            "stage": 2,
-            "offload_param": {"device": "cpu"}
+            "stage": 3,
+            "offload_param": {"device": "cpu"},
         },
         "train_batch_size": EPISODES_PER_ITERATION,
         "train_micro_batch_size_per_gpu": PER_DEVICE_BATCH_SIZE,
