@@ -27,6 +27,7 @@ def parse_arguments():
     parser.add_argument("--episodes_per_iteration", type=int, default=cfg.DEFAULT_EPISODES_PER_ITERATION, help="Global batch size (episodes per iteration)")
     parser.add_argument("--generations_per_sample", type=int, default=cfg.DEFAULT_GENERATIONS_PER_SAMPLE, help="Number of responses per prompt")
     parser.add_argument("--per_device_batch_size", type=int, default=cfg.DEFAULT_PER_DEVICE_BATCH_SIZE, help="Micro-batch size per GPU")
+    parser.add_argument("--no_vllm", action="store_true", help="If set, skip initializing vLLM inference engine to save memory")
 
     args = parser.parse_args()
     return args
@@ -164,12 +165,17 @@ def main():
     )
 
     # --- Initialize Inference Engine (Rank 0) --- #
-    inference_engine = initialize_inference_engine(
-        model_name=model_name,
-        tokenizer_name=model_chat_name,
-        world_size=world_size,
-        rank=local_rank
-    )
+    inference_engine = None
+    if not args.no_vllm:
+        inference_engine = initialize_inference_engine(
+            model_name=model_name,
+            tokenizer_name=model_chat_name,
+            world_size=world_size,
+            rank=local_rank
+        )
+    else:
+        if is_rank_0:
+            print("Skipping vLLM initialization (--no_vllm specified).")
 
     # --- WandB Setup (Rank 0) --- #
     if is_rank_0:
