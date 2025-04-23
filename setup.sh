@@ -10,6 +10,8 @@ CONDA_ENV_NAME="nano-aha"
 REPO_URL="https://github.com/p21asthana/nano-aha-moment.git"
 REPO_DIR="nano-aha-moment"
 PYTHON_VERSION="3.10" # Specify Python version for conda env
+# Define persistent environment path inside SageMaker directory
+PERSISTENT_ENV_PATH="/home/ec2-user/SageMaker/envs/${CONDA_ENV_NAME}"
 
 # --- System Updates and Build Tools ---
 echo ">>> Updating system and installing Development Tools..."
@@ -30,16 +32,28 @@ else
   cd "${REPO_DIR}"
 fi
 
-# --- Create Conda Environment ---
-echo ">>> Creating Conda environment: ${CONDA_ENV_NAME}..."
-conda create --name "${CONDA_ENV_NAME}" python="${PYTHON_VERSION}" -y
+# --- Create Conda Environment at Persistent Path ---
+echo ">>> Checking/Creating Conda environment at persistent path: ${PERSISTENT_ENV_PATH}..."
+# Ensure the parent directory exists
+mkdir -p "$(dirname "${PERSISTENT_ENV_PATH}")"
+
+if [ -d "${PERSISTENT_ENV_PATH}" ]; then
+    echo "Environment directory ${PERSISTENT_ENV_PATH} already exists. Skipping creation."
+    echo "If you want a fresh environment, please remove the directory first:"
+    echo "rm -rf ${PERSISTENT_ENV_PATH}"
+else
+    conda create --prefix "${PERSISTENT_ENV_PATH}" python="${PYTHON_VERSION}" -y
+    echo "Environment created at ${PERSISTENT_ENV_PATH}"
+fi
+
 
 # --- Activate Conda Environment (Requires sourcing conda init) ---
 echo ">>> Activating Conda environment..."
 # Find conda base path and source init script
 CONDA_BASE=$(conda info --base)
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
-conda activate "${CONDA_ENV_NAME}"
+# Activate using the persistent path
+conda activate "${PERSISTENT_ENV_PATH}"
 
 # --- Configure Conda Channels ---
 echo ">>> Configuring Conda channels..."
@@ -47,13 +61,14 @@ conda config --add channels conda-forge
 conda config --set channel_priority strict
 
 # --- Install Compatible Conda Compiler (GCC 11) ---
-echo ">>> Installing Conda GCC 11..."
-conda install gcc_linux-64=11 gxx_linux-64=11 -c conda-forge -y
+echo ">>> Installing Conda GCC 11 into ${PERSISTENT_ENV_PATH}..."
+# Use conda install with prefix flag if not activated, or direct if activated
+conda install --prefix "${PERSISTENT_ENV_PATH}" gcc_linux-64=11 gxx_linux-64=11 -c conda-forge -y
 
 # --- Install Ninja Build System ---
-echo ">>> Installing Ninja..."
-# Ensure pip uses the conda environment's pip
-"${CONDA_PREFIX}/bin/pip" install ninja
+echo ">>> Installing Ninja into ${PERSISTENT_ENV_PATH}..."
+# Use explicit path to pip inside the persistent env
+"${PERSISTENT_ENV_PATH}/bin/pip" install ninja
 
 # --- Install Python Dependencies (Two Steps) ---
 echo ">>> Installing PyTorch first..."
@@ -62,15 +77,15 @@ echo ">>> Installing PyTorch first..."
 unset LD_LIBRARY_PATH
 echo "LD_LIBRARY_PATH unset for PyTorch install."
 
-# 2. Set CC/CXX (Might not be needed for torch install, but doesn't hurt)
-export CC="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-gcc"
-export CXX="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-g++"
-echo "CC/CXX set for PyTorch install."
+# 2. Set CC/CXX to use the Conda GCC 11 from the persistent path
+export CC="${PERSISTENT_ENV_PATH}/bin/x86_64-conda-linux-gnu-gcc"
+export CXX="${PERSISTENT_ENV_PATH}/bin/x86_64-conda-linux-gnu-g++"
+echo "CC set to: ${CC}"
+echo "CXX set to: ${CXX}"
 
 # 3. Install torch==2.6.0 directly (from modified requirements)
-# Let pip find the appropriate wheel (omit index-url for now)
-# Use the conda env pip explicitly
-"${CONDA_PREFIX}/bin/pip" install torch==2.6.0
+# Use explicit path to pip inside the persistent env
+"${PERSISTENT_ENV_PATH}/bin/pip" install torch==2.6.0
 
 echo ">>> Installing remaining dependencies..."
 
@@ -79,18 +94,21 @@ unset LD_LIBRARY_PATH
 echo "LD_LIBRARY_PATH unset for remaining installs."
 
 # 2. Set CC/CXX again (essential for xformers, deepspeed)
-export CC="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-gcc"
-export CXX="${CONDA_PREFIX}/bin/x86_64-conda-linux-gnu-g++"
-echo "CC/CXX set for remaining installs."
+export CC="${PERSISTENT_ENV_PATH}/bin/x86_64-conda-linux-gnu-gcc"
+export CXX="${PERSISTENT_ENV_PATH}/bin/x86_64-conda-linux-gnu-g++"
+echo "CC set to: ${CC}"
+echo "CXX set to: ${CXX}"
 
 # 3. Install the rest of the requirements (pip will skip already installed torch)
-"${CONDA_PREFIX}/bin/pip" install -r requirements.txt
+# Use explicit path to pip inside the persistent env
+"${PERSISTENT_ENV_PATH}/bin/pip" install -r requirements.txt
 
 # --- Final Verification (Optional) ---
 echo ">>> Verifying installation (optional)..."
 unset LD_LIBRARY_PATH # Ensure it's still unset for verification
-"${CONDA_PREFIX}/bin/python" -c "import torch; import deepspeed; import xformers; import vllm; import flash_attn; print('--- Verification ---'); print('Torch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('Verification complete.')"
+# Use explicit path to python inside the persistent env
+"${PERSISTENT_ENV_PATH}/bin/python" -c "import torch; import deepspeed; import xformers; import vllm; import flash_attn; print('--- Verification ---'); print('Torch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('Verification complete.')"
 
 echo ">>> Setup script finished successfully!"
-echo ">>> To use the environment, run: conda activate ${CONDA_ENV_NAME}"
+echo ">>> To use the environment, run: conda activate ${PERSISTENT_ENV_PATH}"
 echo ">>> Remember to run 'unset LD_LIBRARY_PATH' in your shell before running python scripts."
