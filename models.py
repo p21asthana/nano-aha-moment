@@ -67,7 +67,7 @@ def initialize_inference_engine(
             model=model_name,
             tokenizer=tokenizer_name, # Pass tokenizer name/path
             gpu_memory_utilization=vllm_gpu_util,
-            max_model_len=2048, # Example value, adjust if needed
+            max_model_len=1024, # Reduced max_model_len
             dtype="bfloat16", # Match model dtype
             # swap_space=4, # Optional: Adjust based on CPU RAM
             # enforce_eager=True,
