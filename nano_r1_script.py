@@ -341,7 +341,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train R1 model with PPO")
     parser.add_argument("--kl_coeff", type=float, default=0.001, help="KL coefficient for PPO")
     parser.add_argument("--temperature", type=float, default=1.0, help="Temperature for sampling")
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-3B", help="Model name/path")
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B", help="Model name/path")
     parser.add_argument("--learning_rate", type=float, default=1e-6, help="Learning rate for training")
     args = parser.parse_args()
 
