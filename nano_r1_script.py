@@ -492,17 +492,9 @@ def main():
     # Initialize vLLM (Inference) engine
     ############################################
 
-    inference_engine = LLM(
-        model=MODEL_NAME,
-        skip_tokenizer_init=False,
-        gpu_memory_utilization=0.2,
-        enable_prefix_caching=True,
-        swap_space=1,
-        scheduling_policy="fcfs",
-        dtype=torch.bfloat16,
-        max_model_len=2048,
-        enable_sleep_mode=True,
-    )
+    # vLLM engine disabled on single-GPU to reduce memory footprint.
+    # Generation will be done with the policy model directly.
+    inference_engine = None
 
     # Wandb for logging
     wandb.init(
@@ -540,7 +532,7 @@ def main():
         #########################################################
 
         eval_stats = None
-        if iteration % 25 == 0:
+        if iteration % 25 == 0 and inference_engine is not None:
             print("Evaluating on eval set...")
             eval_episodes, eval_stats = evaluate_on_test_set(
                 inference_engine=inference_engine,
@@ -578,21 +570,25 @@ def main():
         gen_time = time.time()
 
         # Sample responses
-        outputs = inference_engine.generate(
-            prompt_token_ids=samples["input_ids"],
-            sampling_params=SamplingParams(
-                n=GENERATIONS_PER_SAMPLE,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                top_k=TOP_K,
-                max_tokens=MAX_RESPONSE_TOKENS,
-                detokenize=False,
-                stop_token_ids=[EOS_TOKEN_ID],
-            ),
-        )
-        all_generations = [list(g.token_ids) for out in outputs for g in out.outputs]
-        all_finish_reasons = [g.finish_reason for out in outputs for g in out.outputs]
-        inference_engine.sleep(1)
+        all_generations, all_finish_reasons = [], []
+        for sample in samples:
+            prompt_ids = torch.tensor([sample["input_ids"]], dtype=torch.long, device=policy_model.device)
+
+            with deepspeed.zero.GatheredParameters(policy_model.parameters(), modifier_rank=0):
+                gen_ids = policy_model.module.generate(
+                    input_ids=prompt_ids,
+                    do_sample=True,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    top_k=TOP_K,
+                    max_new_tokens=MAX_RESPONSE_TOKENS,
+                    num_return_sequences=GENERATIONS_PER_SAMPLE,
+                    eos_token_id=EOS_TOKEN_ID,
+                )
+
+            responses = gen_ids[:, prompt_ids.shape[1] :].tolist()
+            all_generations.extend(responses)
+            all_finish_reasons.extend(["stop"] * GENERATIONS_PER_SAMPLE)
 
         print(f"Generated {len(all_generations)} responses")
         gc.collect()
@@ -690,8 +686,9 @@ def main():
         torch.cuda.empty_cache()
         time.sleep(1)
 
-        inference_engine.wake_up()
-        load_model_into_vllm(policy_model, inference_engine)
+        if inference_engine is not None:
+            inference_engine.wake_up()
+            load_model_into_vllm(policy_model, inference_engine)
 
         #########################################################
         # Log metrics
