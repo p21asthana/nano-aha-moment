@@ -574,17 +574,24 @@ def main():
         for sample in samples:
             prompt_ids = torch.tensor([sample["input_ids"]], dtype=torch.long, device=policy_model.device)
 
+            # Build kwargs for generate call, omitting `top_k` if disabled (<0)
+            gen_kwargs = {
+                "input_ids": prompt_ids,
+                "do_sample": True,
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+                "max_new_tokens": MAX_RESPONSE_TOKENS,
+                "num_return_sequences": GENERATIONS_PER_SAMPLE,
+                "eos_token_id": EOS_TOKEN_ID,
+                "pad_token_id": EOS_TOKEN_ID,
+                # simple all-ones mask since there is no padding in the prompt
+                "attention_mask": torch.ones_like(prompt_ids),
+            }
+            if TOP_K > 0:
+                gen_kwargs["top_k"] = TOP_K
+
             with deepspeed.zero.GatheredParameters(policy_model.parameters(), modifier_rank=0):
-                gen_ids = policy_model.module.generate(
-                    input_ids=prompt_ids,
-                    do_sample=True,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    top_k=TOP_K,
-                    max_new_tokens=MAX_RESPONSE_TOKENS,
-                    num_return_sequences=GENERATIONS_PER_SAMPLE,
-                    eos_token_id=EOS_TOKEN_ID,
-                )
+                gen_ids = policy_model.module.generate(**gen_kwargs)
 
             responses = gen_ids[:, prompt_ids.shape[1] :].tolist()
             all_generations.extend(responses)
